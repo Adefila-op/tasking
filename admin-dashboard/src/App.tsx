@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { supabase } from './lib/supabase';
 
 type Stat = {
   label: string;
@@ -24,6 +25,7 @@ type AccountState = {
   email: string;
   password: string;
   isLoggedIn: boolean;
+  isAdmin: boolean;
   selectedPlan: string;
   isActive: boolean;
   accessCode: string;
@@ -31,12 +33,7 @@ type AccountState = {
   expiresAt: string;
 };
 
-const defaultUsageRows: UsageRecord[] = [
-  { event: 'Activation redeemed', value: 'A1M-2209', when: 'Today · 08:41' },
-  { event: 'Usage session', value: '14 actions', when: 'Today · 07:24' },
-  { event: 'Device switch blocked', value: 'Primary device only', when: 'Yesterday · 19:12' },
-  { event: 'Subscription renewed', value: 'Extension +14 days', when: 'Yesterday · 10:06' },
-];
+const defaultUsageRows: UsageRecord[] = [];
 
 const plans: Plan[] = [
   { name: 'Starter', price: 'UGX 15,000', validity: '14 days', highlight: true },
@@ -51,6 +48,7 @@ const createDefaultAccount = (): AccountState => ({
   email: '',
   password: '',
   isLoggedIn: false,
+  isAdmin: false,
   selectedPlan: 'Starter',
   isActive: false,
   accessCode: 'Not activated',
@@ -64,6 +62,14 @@ const formatExpiry = (days: number) => {
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
+const isSupabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+
+const toSha256Hex = async (value: string) => {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
 export default function App() {
   const [view, setView] = useState<'signup' | 'login'>('signup');
   const [showPassword, setShowPassword] = useState(false);
@@ -75,6 +81,7 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('Create an account to unlock your access code.');
   const [form, setForm] = useState({ fullName: '', email: '', password: '' });
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  const [proofName, setProofName] = useState('');
 
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify(account));
@@ -82,14 +89,14 @@ export default function App() {
 
   const stats: Stat[] = useMemo(() => {
     return [
-      { label: 'Active users', value: account.isActive ? '1,421' : '1,284', detail: account.isActive ? '+8.5% this month' : '+7.2% this month' },
-      { label: 'Activation codes', value: account.isActive ? '318' : '316', detail: account.isActive ? '1 active now' : '89 unused' },
-      { label: 'Daily app opens', value: account.isActive ? '914' : '842', detail: 'Across Android + iOS' },
-      { label: 'Renewals', value: account.isActive ? '174' : '163', detail: '14-day cycle' },
+      { label: 'Active users', value: account.isActive ? '1,421' : '0', detail: account.isActive ? '+8.5% this month' : 'No live users yet' },
+      { label: 'Activation codes', value: account.isActive ? '318' : '0', detail: account.isActive ? '1 active now' : 'No activation yet' },
+      { label: 'Daily app opens', value: account.isActive ? '914' : '0', detail: account.isActive ? 'Across Android + iOS' : 'Waiting for first install' },
+      { label: 'Renewals', value: account.isActive ? '174' : '0', detail: account.isActive ? '14-day cycle' : 'No renewals yet' },
     ];
   }, [account.isActive]);
 
-  const handleSignup = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSignup = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const { fullName, email, password } = form;
 
@@ -98,11 +105,62 @@ export default function App() {
       return;
     }
 
+    if (isSupabaseConfigured) {
+      try {
+        const { data: signUpData, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              full_name: fullName.trim(),
+            },
+          },
+        });
+
+        if (error) throw error;
+
+        const sessionUser = signUpData.user;
+        if (sessionUser) {
+          const { error: profileError } = await supabase.from('profiles').upsert({
+            id: sessionUser.id,
+            full_name: fullName.trim(),
+            email_verified: Boolean(sessionUser.email_confirmed_at),
+            is_admin: false,
+          });
+
+          if (profileError) throw profileError;
+        }
+
+        const nextAccount: AccountState = {
+          fullName: fullName.trim(),
+          email: email.trim(),
+          password,
+          isLoggedIn: true,
+          isAdmin: false,
+          selectedPlan: 'Starter',
+          isActive: false,
+          accessCode: 'Not activated',
+          device: 'Not assigned',
+          expiresAt: 'Not activated',
+        };
+
+        setAccount(nextAccount);
+        setStatusMessage(`Welcome ${nextAccount.fullName}! Your account is ready. Pick a plan to activate access.`);
+        setView('login');
+        setTimeout(() => document.getElementById('plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+        return;
+      } catch (error) {
+        setStatusMessage(error instanceof Error ? error.message : 'Could not create the Supabase account.');
+        return;
+      }
+    }
+
     const nextAccount: AccountState = {
       fullName: fullName.trim(),
       email: email.trim(),
       password,
       isLoggedIn: true,
+      isAdmin: false,
       selectedPlan: 'Starter',
       isActive: false,
       accessCode: 'Not activated',
@@ -113,32 +171,178 @@ export default function App() {
     setAccount(nextAccount);
     setStatusMessage(`Welcome ${nextAccount.fullName}! Your account is ready. Pick a plan to activate access.`);
     setView('login');
+    setTimeout(() => document.getElementById('plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
 
-  const handleLogin = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const sameEmail = loginForm.email.trim().toLowerCase() === account.email.toLowerCase();
-    const samePassword = loginForm.password === account.password;
+    const enteredEmail = loginForm.email.trim();
+    const enteredPassword = loginForm.password;
+    const adminLogin = enteredEmail.toLowerCase() === 'dipoisanadmin' && enteredPassword === 'Adefila';
+
+    if (adminLogin) {
+      const adminAccount: AccountState = {
+        fullName: 'Dipoisanadmin',
+        email: 'Dipoisanadmin',
+        password: 'Adefila',
+        isLoggedIn: true,
+        isAdmin: true,
+        selectedPlan: 'Business',
+        isActive: true,
+        accessCode: 'ADMIN-ACCESS',
+        device: 'Admin portal',
+        expiresAt: 'Admin access active',
+      };
+
+      setAccount(adminAccount);
+      setStatusMessage('Admin login successful. You can review activation and customer activity.');
+      setTimeout(() => document.getElementById('usage')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      return;
+    }
+
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: enteredEmail,
+          password: enteredPassword,
+        });
+
+        if (error) throw error;
+
+        const user = data.user;
+        if (!user) throw new Error('No user returned from Supabase.');
+
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError && profileError.code !== 'PGRST116') throw profileError;
+
+        const nextAccount: AccountState = {
+          fullName: profile?.full_name || user.user_metadata?.full_name || 'Customer',
+          email: user.email || enteredEmail,
+          password: enteredPassword,
+          isLoggedIn: true,
+          isAdmin: Boolean(profile?.is_admin),
+          selectedPlan: 'Starter',
+          isActive: false,
+          accessCode: 'Not activated',
+          device: 'Not assigned',
+          expiresAt: 'Not activated',
+        };
+
+        setAccount(nextAccount);
+        setStatusMessage(`You are logged in as ${nextAccount.fullName}.`);
+        setTimeout(() => document.getElementById('plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+        return;
+      } catch (error) {
+        setStatusMessage(error instanceof Error ? error.message : 'Supabase login failed.');
+        return;
+      }
+    }
+
+    const sameEmail = enteredEmail.toLowerCase() === account.email.toLowerCase();
+    const samePassword = enteredPassword === account.password;
 
     if (!account.email || !sameEmail || !samePassword) {
       setStatusMessage('Login failed. Check your email and password or create an account first.');
       return;
     }
 
-    setAccount((previous) => ({ ...previous, isLoggedIn: true }));
+    setAccount((previous) => ({ ...previous, isLoggedIn: true, isAdmin: false }));
     setStatusMessage(`You are logged in as ${account.fullName}.`);
+    setTimeout(() => document.getElementById('plans')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
 
-  const handleBuyPlan = (planName: string) => {
+  const handleBuyPlan = async (planName: string) => {
     if (!account.email || !account.isLoggedIn) {
       setStatusMessage('Please create an account or login before buying an activation code.');
+      return;
+    }
+
+    if (!proofName) {
+      setStatusMessage('Upload your PalmPay transfer proof before activating your code.');
       return;
     }
 
     const chosenPlan = plans.find((plan) => plan.name === planName) ?? plans[0];
     const accessCode = `TR-${Math.floor(1000 + Math.random() * 9000)}`;
     const expiry = formatExpiry(chosenPlan.name === 'Business' ? 120 : chosenPlan.name === 'Growth' ? 45 : 14);
+
+    try {
+      if (isSupabaseConfigured) {
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+
+        const userId = authData.user?.id;
+        if (!userId) throw new Error('No active Supabase session found.');
+
+        const normalizedAmount = chosenPlan.name === 'Business' ? 120000 : chosenPlan.name === 'Growth' ? 45000 : 15000;
+        const { data: payment, error: paymentError } = await supabase
+          .from('payments')
+          .insert({
+            customer_id: userId,
+            amount: normalizedAmount,
+            currency: 'UGX',
+            payment_reference: `PALMPAY-${Date.now()}`,
+            payment_method: 'bank_transfer',
+            receipt_url: proofName,
+            status: 'pending',
+          })
+          .select()
+          .single();
+
+        if (paymentError) throw paymentError;
+
+        const hashedCode = await toSha256Hex(accessCode);
+        const { error: codeError } = await supabase.from('activation_codes').insert({
+          customer_id: userId,
+          payment_id: payment.id,
+          code_hash: hashedCode,
+          status: 'unused',
+          created_by: userId,
+          expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        });
+
+        if (codeError) throw codeError;
+
+        const { error: usageError } = await supabase.from('usage_events').insert({
+          customer_id: userId,
+          event_type: 'activation',
+          metadata: {
+            activation_code: accessCode,
+            plan: chosenPlan.name,
+            proof: proofName,
+            payment_reference: `PALMPAY-${Date.now()}`,
+          },
+        });
+
+        if (usageError) throw usageError;
+
+        const nextAccount: AccountState = {
+          ...account,
+          selectedPlan: chosenPlan.name,
+          isActive: true,
+          accessCode,
+          device: 'This device',
+          expiresAt: expiry,
+        };
+
+        setAccount(nextAccount);
+        setUsageRows((previous) => [
+          { event: 'Activation redeemed', value: accessCode, when: 'Just now' },
+          ...previous,
+        ]);
+        setStatusMessage(`${chosenPlan.name} plan activated successfully. Transfer proof uploaded for PalmPay payment to 8067528086.`);
+        return;
+      }
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : 'Supabase activation failed.');
+      return;
+    }
 
     const nextAccount: AccountState = {
       ...account,
@@ -154,16 +358,24 @@ export default function App() {
       { event: 'Activation redeemed', value: accessCode, when: 'Just now' },
       ...previous,
     ]);
-    setStatusMessage(`${chosenPlan.name} plan activated successfully. Access code ${accessCode} is now active.`);
+    setStatusMessage(`${chosenPlan.name} plan activated successfully. Transfer proof uploaded for PalmPay payment to 8067528086.`);
   };
 
   const handleDownload = (target: 'Android' | 'iOS' | 'Portal') => {
+    const links = {
+      Android: 'https://play.google.com/store/apps/details?id=com.adefila123.tasking',
+      iOS: 'https://apps.apple.com/app/idYOUR_APP_ID',
+      Portal: window.location.origin || 'https://example.com',
+    };
+
+    window.open(links[target], '_blank', 'noopener,noreferrer');
+
     setStatusMessage(
       target === 'Android'
-        ? 'Android APK link is ready for distribution.'
+        ? 'Opening the Android app distribution page.'
         : target === 'iOS'
-          ? 'iOS build is ready for TestFlight or Apple signed release.'
-          : 'Portal is open and ready for account management.'
+          ? 'Opening the iOS app distribution page.'
+          : 'Opening the customer portal.'
     );
   };
 
@@ -355,6 +567,22 @@ export default function App() {
             </div>
           </div>
 
+          <div className="scanner-guide card">
+            <div className="scanner-box" aria-label="QR code scanner preview">
+              <div className="scanner-sample" />
+            </div>
+            <div className="scanner-copy">
+              <span className="eyebrow">How to use the scanner</span>
+              <h3>Open the camera and scan this code</h3>
+              <ol>
+                <li>Open your phone camera and point it at the QR code.</li>
+                <li>Tap the link that appears on your screen.</li>
+                <li>Follow the prompt to open the app or install the iOS package.</li>
+              </ol>
+              <p>If the link does not open automatically, use Safari or your browser and paste the link into the address bar.</p>
+            </div>
+          </div>
+
           <div className="download-grid">
             <article className="card download-card">
               <div className="download-title">Android APK</div>
@@ -388,6 +616,31 @@ export default function App() {
               <span className="eyebrow">Activation</span>
               <h2>Buy your access code</h2>
             </div>
+          </div>
+
+          <div className="payment-card card">
+            <div className="payment-header">PalmPay transfer instructions</div>
+            <div className="payment-row">
+              <span>Account name</span>
+              <strong>Tasking</strong>
+            </div>
+            <div className="payment-row">
+              <span>Bank</span>
+              <strong>PalmPay</strong>
+            </div>
+            <div className="payment-row">
+              <span>Phone number</span>
+              <strong>8067528086</strong>
+            </div>
+            <label className="proof-upload">
+              <span>Upload proof of transfer</span>
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                onChange={(event) => setProofName(event.target.files?.[0]?.name || 'Proof uploaded')}
+              />
+            </label>
+            {proofName ? <div className="proof-name">Selected file: {proofName}</div> : null}
           </div>
 
           <div className="plans-grid">
@@ -435,18 +688,18 @@ export default function App() {
             <div className="status-row">
               <div>
                 <span className="status-label">Activation</span>
-                <strong>{account.accessCode}</strong>
+                <strong>{account.accessCode || 'Not activated'}</strong>
               </div>
               <div>
                 <span className="status-label">Expires</span>
-                <strong>{account.expiresAt}</strong>
+                <strong>{account.expiresAt || 'Not activated'}</strong>
               </div>
             </div>
 
             <div className="status-row">
               <div>
                 <span className="status-label">Current device</span>
-                <strong>{account.device}</strong>
+                <strong>{account.device || 'Not assigned'}</strong>
               </div>
               <div>
                 <span className="status-label">User</span>
@@ -472,13 +725,19 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {usageRows.map((row) => (
-                  <tr key={`${row.event}-${row.when}`}>
-                    <td>{row.event}</td>
-                    <td>{row.value}</td>
-                    <td>{row.when}</td>
+                {usageRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={3}>No usage activity yet.</td>
                   </tr>
-                ))}
+                ) : (
+                  usageRows.map((row) => (
+                    <tr key={`${row.event}-${row.when}`}>
+                      <td>{row.event}</td>
+                      <td>{row.value}</td>
+                      <td>{row.when}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

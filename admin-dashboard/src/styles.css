@@ -267,6 +267,98 @@ input::placeholder { color: #90a4d3; }
   letter-spacing: -0.05em;
 }
 
+.scanner-guide {
+  display: grid;
+  grid-template-columns: 290px 1fr;
+  gap: 26px;
+  align-items: center;
+  padding: 24px;
+  margin-bottom: 22px;
+}
+
+.scanner-box {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 260px;
+  aspect-ratio: 1;
+  border-radius: 22px;
+  background: rgba(5, 13, 27, 0.9);
+  border: 1px solid rgba(157, 175, 255, 0.22);
+  box-shadow: inset 0 0 0 8px rgba(148, 163, 184, 0.08);
+}
+
+.scanner-sample {
+  width: 80%;
+  height: 80%;
+  background:
+    linear-gradient(90deg, #111 0 10%, transparent 10% 20%, #111 20% 30%, transparent 30% 40%, #111 40% 50%, transparent 50% 60%, #111 60% 70%, transparent 70% 80%, #111 80% 90%, transparent 90% 100%),
+    linear-gradient(#111 0 10%, transparent 10% 20%, #111 20% 30%, transparent 30% 40%, #111 40% 50%, transparent 50% 60%, #111 60% 70%, transparent 70% 80%, #111 80% 90%, transparent 90% 100%);
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  border-radius: 10px;
+  opacity: 0.96;
+}
+
+.scanner-copy h3 {
+  margin: 12px 0 14px;
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  letter-spacing: -0.05em;
+}
+
+.scanner-copy ol {
+  margin: 0 0 12px 18px;
+  color: var(--muted);
+  line-height: 1.7;
+  padding: 0;
+}
+
+.scanner-copy p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.payment-card {
+  margin-bottom: 22px;
+  padding: 22px 24px;
+}
+
+.payment-header {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 18px;
+}
+
+.payment-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(157, 175, 255, 0.08);
+  color: var(--muted);
+}
+
+.payment-row strong {
+  color: var(--text);
+}
+
+.proof-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+  color: var(--muted);
+}
+
+.proof-upload input {
+  padding: 12px 14px;
+}
+
+.proof-name {
+  margin-top: 12px;
+  color: var(--success);
+}
+
 .download-grid,
 .plans-grid {
   display: grid;
